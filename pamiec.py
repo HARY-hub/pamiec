@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox, colorchooser
+from tkinter import messagebox
 import os
 import sys
 import webbrowser
@@ -19,10 +19,11 @@ class NotesApp:
         self.root.geometry("400x300")
 
         self.selection_color = "#4CAF50"
+        self.special_color = "#1A237E"  # granatowy
+        self.special_text_color = "white"  # biały
         self.current_font = ("Arial", 10)
 
         self.data_file = os.path.join(BASE_DIR, "dane.txt")
-        self.style_file = os.path.join(BASE_DIR, "style.txt")  # plik przechowujący style linii
 
         if not os.path.exists(self.data_file):
             with open(self.data_file, "w", encoding="utf-8") as file:
@@ -50,7 +51,8 @@ class NotesApp:
             inactiveselectbackground=self.selection_color,
             selectforeground="white",
             cursor="arrow",
-            yscrollcommand=self.scrollbar.set
+            yscrollcommand=self.scrollbar.set,
+            tabs=("2.5c")  # Ustawienie tabulatora na około 5 cm (2.5c = 2.5 cm)
         )
         self.text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -78,15 +80,15 @@ class NotesApp:
         )
         self.delete_button.pack(side=tk.LEFT, padx=(0, 5))
 
-        self.style_button = tk.Button(
-            self.button_frame, text="Kolor", command=self.change_line_style,
-            bg="#3F51B5", fg="white", font=("Arial", 10, "bold"), width=10
+        self.color_button = tk.Button(
+            self.button_frame, text="Kolor linii", command=self.toggle_line_color,
+            bg="#6A1B9A", fg="white", font=("Arial", 10, "bold"), width=10
         )
-        self.style_button.pack(side=tk.LEFT, padx=(0, 5))
+        self.color_button.pack(side=tk.LEFT, padx=(0, 5))
 
         self.font_button = tk.Button(
             self.button_frame, text="Czcionka", command=self.choose_font,
-            bg="#009688", fg="white", font=("Arial", 10, "bold"), width=10
+            bg="#3F51B5", fg="white", font=("Arial", 10, "bold"), width=10
         )
         self.font_button.pack(side=tk.LEFT, padx=(0, 5))
 
@@ -98,7 +100,7 @@ class NotesApp:
 
         self.instruction_label = tk.Label(
             self.main_frame,
-            text="↑/↓ przesuwanie | Dwuklik: otwarcie linku | Kolor: zmiana tła/czcionki",
+            text="↑/↓ przesuwanie | Dwuklik: kopiowanie/otwieranie | Czcionka zmienia wygląd | Kolor linii: granatowy/biały",
             font=("Arial", 8),
             fg="gray"
         )
@@ -116,7 +118,6 @@ class NotesApp:
         self.load_data()
         self.restore_font()
         self.restore_geometry(self.root, "MAIN_WINDOW")
-        self.load_styles()
 
     # ---------- CZCIONKA ----------
     def choose_font(self):
@@ -153,145 +154,98 @@ class NotesApp:
                     pass
                 break
 
-    # ---------- STYL LINII ----------
-    def change_line_style(self):
-        """Wywoływane po kliknięciu 'Kolor' - wybiera kolory i przypisuje tag linii"""
-        line_num, _ = self.get_selected_line()
-        if not line_num:
-            messagebox.showinfo("Informacja", "Najpierw zaznacz linię do zmiany koloru.")
-            return
-        bg_color = colorchooser.askcolor(title="Wybierz kolor tła")[1]
-        fg_color = colorchooser.askcolor(title="Wybierz kolor czcionki")[1]
-        if not bg_color or not fg_color:
-            return
+    # ---------- KOLOR LINII ----------
+    def toggle_line_color(self):
+        """Zmienia kolor zaznaczonej linii na granatowy/biały lub przywraca domyślny"""
+        line_num, selected_text = self.get_selected_line()
+        if selected_text:
+            # Sprawdź czy linia ma już specjalny kolor
+            if selected_text.startswith("#COLOR#"):
+                # Usuń kolor
+                new_text = selected_text.replace("#COLOR#", "", 1)
+            else:
+                # Dodaj kolor
+                new_text = f"#COLOR#{selected_text}"
+            
+            with open(self.data_file, "r", encoding="utf-8") as file:
+                lines = file.readlines()
+            
+            if 0 < line_num <= len(lines):
+                lines[line_num - 1] = new_text + "\n"
+                self._save_with_geometry(lines)
+                self.load_data()
+                
+                # Ponownie zaznacz tę samą linię
+                self.text_widget.tag_remove("sel", "1.0", tk.END)
+                self.text_widget.tag_add("sel", f"{line_num}.0", f"{line_num}.end+1c")
+                self.text_widget.see(f"{line_num}.0")
+        else:
+            messagebox.showwarning("Ostrzeżenie", "Najpierw zaznacz linię do zmiany koloru")
 
-        tag_name = f"line_{line_num}"
-        self.text_widget.tag_config(tag_name, background=bg_color, foreground=fg_color)
-        # zakreślamy dokładnie do końca linii (nie dodajemy końcowego \n)
-        self.text_widget.tag_add(tag_name, f"{line_num}.0", f"{line_num}.end")
-        self.save_style(line_num, bg_color, fg_color)
+    def is_colored_line(self, line: str) -> bool:
+        """Sprawdza czy linia ma specjalny kolor"""
+        return line.startswith("#COLOR#")
 
-    def save_style(self, line_num, bg, fg):
-        """Zapis pojedynczego stylu do pliku (nadpisuje lub dopisuje)"""
-        styles = self.load_style_dict()
-        styles[int(line_num)] = (bg, fg)
-        with open(self.style_file, "w", encoding="utf-8") as f:
-            for ln in sorted(styles.keys()):
-                b, fgc = styles[ln]
-                f.write(f"{ln}|{b}|{fgc}\n")
-
-    def load_styles(self):
-        """Wczytuje style z pliku i aplikuje tagi do widgetu"""
-        if not os.path.exists(self.style_file):
-            return
-        with open(self.style_file, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    parts = line.strip().split("|")
-                    if len(parts) != 3:
-                        continue
-                    line_num_str, bg, fg = parts
-                    line_num = int(line_num_str)
-                    tag_name = f"line_{line_num}"
-                    self.text_widget.tag_config(tag_name, background=bg, foreground=fg)
-                    self.text_widget.tag_add(tag_name, f"{line_num}.0", f"{line_num}.end")
-                except Exception:
-                    # ignoruj błędy parsowania
-                    pass
-
-    def load_style_dict(self):
-        """Zwraca dict {line_num: (bg, fg)}"""
-        d = {}
-        if not os.path.exists(self.style_file):
-            return d
-        with open(self.style_file, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    ln, bg, fg = line.strip().split("|")
-                    d[int(ln)] = (bg, fg)
-                except:
-                    pass
-        return d
-
-    def reconcile_and_save_styles(self, old_lines, new_lines):
-        """
-        Przy próbie zachowania stylów po zmianie kolejności/edycji:
-        - mapuje style z old_lines do new_lines na podstawie pierwszego dopasowania treści.
-        - zapisuje wynik do style_file.
-        """
-        old_styles = self.load_style_dict()  # klucze int -> (bg,fg)
-        # mapowanie treści -> lista pozycji w old_lines
-        content_positions = {}
-        for idx, text in enumerate(old_lines, start=1):
-            content_positions.setdefault(text.rstrip("\n"), []).append(idx)
-
-        new_styles = {}
-        used_old_positions = set()
-        for new_idx, new_text in enumerate(new_lines, start=1):
-            candidates = content_positions.get(new_text.rstrip("\n"), [])
-            # wybieramy pierwszego nieużytego kandydata
-            chosen = None
-            for c in candidates:
-                if c not in used_old_positions:
-                    chosen = c
-                    break
-            if chosen and chosen in old_styles:
-                new_styles[new_idx] = old_styles[chosen]
-                used_old_positions.add(chosen)
-        # zapis nowych styli
-        with open(self.style_file, "w", encoding="utf-8") as f:
-            for ln in sorted(new_styles.keys()):
-                b, fg = new_styles[ln]
-                f.write(f"{ln}|{b}|{fg}\n")
+    def remove_color_tag(self, line: str) -> str:
+        """Usuwa tag koloru z linii"""
+        if self.is_colored_line(line):
+            return line.replace("#COLOR#", "", 1)
+        return line
 
     # ---------- NOTATKI ----------
+    def format_display_line(self, line: str) -> str:
+        """Formatowanie do wyświetlania: 'tekst&&&opis' -> 'tekst - opis' """
+        # Usuń tag koloru przed formatowaniem
+        display_line = self.remove_color_tag(line)
+        
+        if "&&&" in display_line:
+            left, right = display_line.split("&&&", 1)
+            return f"{left.strip()} - {right.strip()}"
+        return display_line.strip()
+
+    def extract_main_part(self, line: str) -> str:
+        """Zwraca część przed '&&&' albo całość (bez tagu koloru)"""
+        clean_line = self.remove_color_tag(line)
+        if "&&&" in clean_line:
+            return clean_line.split("&&&", 1)[0].strip()
+        return clean_line.strip()
+
     def is_link(self, text):
-        return text.strip().lower().startswith(('http://', 'https://', 'www.')) if text else False
+        clean_text = self.remove_color_tag(text) if text else ""
+        return clean_text.strip().lower().startswith(('http://', 'https://', 'www.')) if clean_text else False
 
     def on_mouse_move(self, event):
-        try:
-            index = self.text_widget.index(f"@{event.x},{event.y}")
-            line_num = int(index.split('.')[0])
-            line_text = self.text_widget.get(f"{line_num}.0", f"{line_num}.end").strip()
-            self.text_widget.config(cursor="hand2" if self.is_link(line_text) else "arrow")
-        except Exception:
-            pass
+        index = self.text_widget.index(f"@{event.x},{event.y}")
+        line_num = int(index.split('.')[0])
+        line_text = self.text_widget.get(f"{line_num}.0", f"{line_num}.end").strip()
+        self.text_widget.config(cursor="hand2" if self.is_link(line_text) else "arrow")
 
     def select_line(self, event):
-        try:
-            index = self.text_widget.index(f"@{event.x},{event.y}")
-            line_num = int(index.split('.')[0])
-            self.text_widget.tag_remove("sel", "1.0", tk.END)
-            self.text_widget.tag_add("sel", f"{line_num}.0", f"{line_num}.end+1c")
-            self.text_widget.see(f"{line_num}.0")
-            return "break"
-        except Exception:
-            return
-
-    def handle_double_click(self, event):
-        _, selected_text = self.get_selected_line()
-        if selected_text:
-            if self.is_link(selected_text):
-                self.open_link(selected_text)
-            else:
-                self.copy_to_clipboard()
-            self.root.iconify()
+        index = self.text_widget.index(f"@{event.x},{event.y}")
+        line_num = int(index.split('.')[0])
+        self.text_widget.tag_remove("sel", "1.0", tk.END)
+        self.text_widget.tag_add("sel", f"{line_num}.0", f"{line_num}.end+1c")
+        self.text_widget.see(f"{line_num}.0")
         return "break"
 
-    def open_link(self, link_text):
-        try:
-            formatted_link = link_text.strip()
-            if formatted_link.startswith('www.'):
-                formatted_link = 'http://' + formatted_link
-            webbrowser.open(formatted_link)
-        except Exception as e:
-            messagebox.showerror("Błąd", f"Nie udało się otworzyć linku: {str(e)}")
-
-    def copy_to_clipboard(self):
-        _, selected_text = self.get_selected_line()
+    def handle_double_click(self, event):
+        line_num, selected_text = self.get_selected_line()
         if selected_text:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(selected_text)
+            # Sprawdź czy to link (bez tagu koloru)
+            clean_text = self.remove_color_tag(selected_text)
+            if self.is_link(clean_text):
+                # Otwórz link w przeglądarce
+                link = clean_text.strip()
+                if link.startswith('www.'):
+                    link = 'http://' + link
+                webbrowser.open(link)
+            else:
+                # kopiujemy tylko część przed &&& (bez tagu koloru)
+                to_copy = self.extract_main_part(selected_text)
+                self.root.clipboard_clear()
+                self.root.clipboard_append(to_copy)
+                self.root.iconify()
+        return "break"
 
     def get_selected_line(self):
         try:
@@ -299,9 +253,13 @@ class NotesApp:
                 start_index = self.text_widget.index("sel.first")
                 end_index = self.text_widget.index("sel.last")
                 line_num = int(start_index.split('.')[0])
-                selected_text = self.text_widget.get(start_index, end_index).strip()
-                return line_num, selected_text
-        except Exception:
+                # UWAGA: tu pobieramy *oryginalny* tekst z pliku, a nie z formatowania
+                with open(self.data_file, "r", encoding="utf-8") as file:
+                    lines = [l for l in file.readlines() if not l.startswith("#GEOMETRY#") and not l.startswith("#FONT#")]
+                if 0 < line_num <= len(lines):
+                    selected_text = lines[line_num - 1].strip()
+                    return line_num, selected_text
+        except:
             pass
         return None, None
 
@@ -310,16 +268,12 @@ class NotesApp:
         if selected_text and line_num > 1:
             with open(self.data_file, "r", encoding="utf-8") as file:
                 lines = file.readlines()
-            if line_num <= len(lines):
-                # swap
-                lines[line_num - 1], lines[line_num - 2] = lines[line_num - 2], lines[line_num - 1]
-                # zapisz i postaraj się zrekoncilować style
-                self._save_with_geometry_and_styles(lines)
-                self.load_data()
-                # zaznacz nową pozycję
-                self.text_widget.tag_remove("sel", "1.0", tk.END)
-                self.text_widget.tag_add("sel", f"{line_num-1}.0", f"{line_num-1}.end+1c")
-                self.text_widget.see(f"{line_num-1}.0")
+            lines[line_num - 1], lines[line_num - 2] = lines[line_num - 2], lines[line_num - 1]
+            self._save_with_geometry(lines)
+            self.load_data()
+            self.text_widget.tag_remove("sel", "1.0", tk.END)
+            self.text_widget.tag_add("sel", f"{line_num-1}.0", f"{line_num-1}.end+1c")
+            self.text_widget.see(f"{line_num-1}.0")
         return "break"
 
     def move_note_down(self, event):
@@ -329,7 +283,7 @@ class NotesApp:
                 lines = file.readlines()
             if line_num < len(lines):
                 lines[line_num - 1], lines[line_num] = lines[line_num], lines[line_num - 1]
-                self._save_with_geometry_and_styles(lines)
+                self._save_with_geometry(lines)
                 self.load_data()
                 self.text_widget.tag_remove("sel", "1.0", tk.END)
                 self.text_widget.tag_add("sel", f"{line_num+1}.0", f"{line_num+1}.end+1c")
@@ -342,19 +296,23 @@ class NotesApp:
     def edit_note(self):
         line_num, selected_text = self.get_selected_line()
         if selected_text:
-            self.open_edit_window("Modyfikuj notatkę", selected_text, line_num, is_add=False)
+            # Usuń tag koloru przed edycją
+            clean_text = self.remove_color_tag(selected_text)
+            self.open_edit_window("Modyfikuj notatkę", clean_text, line_num, is_add=False)
         else:
             messagebox.showwarning("Ostrzeżenie", "Najpierw zaznacz linię do modyfikacji")
 
     def delete_note(self):
         line_num, selected_text = self.get_selected_line()
-        if selected_text and messagebox.askyesno("Potwierdzenie", f"Czy usunąć notatkę?\n\n{selected_text}"):
-            with open(self.data_file, "r", encoding="utf-8") as file:
-                lines = file.readlines()
-            if 0 < line_num <= len(lines):
-                del lines[line_num - 1]
-            self._save_with_geometry_and_styles(lines)
-            self.load_data()
+        if selected_text:
+            clean_text = self.remove_color_tag(selected_text)
+            if messagebox.askyesno("Potwierdzenie", f"Czy usunąć notatkę?\n\n{clean_text}"):
+                with open(self.data_file, "r", encoding="utf-8") as file:
+                    lines = file.readlines()
+                if 0 < line_num <= len(lines):
+                    del lines[line_num - 1]
+                self._save_with_geometry(lines)
+                self.load_data()
 
     def open_edit_window(self, title, initial_text, line_num=None, is_add=True):
         edit_window = tk.Toplevel(self.root)
@@ -393,27 +351,63 @@ class NotesApp:
         text_content = text_entry.get("1.0", tk.END).strip()
         if not text_content:
             return
+        
+        # Przywróć tag koloru jeśli oryginalna linia miała kolor
+        if line_num is not None:
+            _, original_text = self.get_selected_line()
+            if original_text and self.is_colored_line(original_text):
+                text_content = f"#COLOR#{text_content}"
+        
         with open(self.data_file, "r", encoding="utf-8") as file:
             lines = file.readlines()
         if line_num is not None and 0 < line_num <= len(lines):
             lines[line_num - 1] = text_content + "\n"
         else:
             lines.append(text_content + "\n")
-        self._save_with_geometry_and_styles(lines)
+        self._save_with_geometry(lines)
         self.load_data()
         self.on_close_edit(edit_window)
 
     def load_data(self):
         self.text_widget.config(state=tk.NORMAL)
         self.text_widget.delete("1.0", tk.END)
+        
+        # Konfiguracja tagów dla kolorów - kolor na całej szerokości linii
+        self.text_widget.tag_configure("special", 
+                                     background=self.special_color, 
+                                     foreground=self.special_text_color,
+                                     borderwidth=0,
+                                     selectbackground=self.special_color,
+                                     selectforeground=self.special_text_color)
+        
         if os.path.exists(self.data_file):
             with open(self.data_file, "r", encoding="utf-8") as file:
                 lines = file.readlines()
-            content = "".join([l for l in lines if not l.startswith("#GEOMETRY#") and not l.startswith("#FONT#")])
-            self.text_widget.insert("1.0", content)
+            
+            line_number = 1
+            for line in lines:
+                if line.startswith("#GEOMETRY#") or line.startswith("#FONT#"):
+                    continue
+                    
+                display_text = self.format_display_line(line)
+                
+                # Wstaw tekst z tabulatorem na początku jeśli linia ma kolor
+                if self.is_colored_line(line):
+                    # Dodajemy tabulator i spacje aby wypełnić linię
+                    padded_text = "\t" + display_text
+                    self.text_widget.insert(tk.END, padded_text + "\n")
+                else:
+                    self.text_widget.insert(tk.END, display_text + "\n")
+                
+                # Zastosuj kolor na całej szerokości linii
+                if self.is_colored_line(line):
+                    start_idx = f"{line_number}.0"
+                    end_idx = f"{line_number}.end+1c"  # +1c aby objąć znak nowej linii
+                    self.text_widget.tag_add("special", start_idx, end_idx)
+                
+                line_number += 1
+                
         self.text_widget.config(state=tk.DISABLED)
-        # po wczytaniu danych przywracamy style
-        self.load_styles()
 
     # ---------- GEOMETRIA ----------
     def on_close(self):
@@ -450,39 +444,7 @@ class NotesApp:
                 window.geometry(geom)
                 break
 
-    # ---------- ZAPIS NOTATEK + ZACHOWANIE STYLI ----------
-    def _save_with_geometry_and_styles(self, note_lines):
-        """
-        Zapisuje note_lines do dane.txt zachowując #GEOMETRY# i #FONT#.
-        Dodatkowo rekoncyliuje style (style.txt) względem nowej zawartości.
-        """
-        # odczytaj stare linie (by dopasować style)
-        if os.path.exists(self.data_file):
-            with open(self.data_file, "r", encoding="utf-8") as file:
-                old_lines = file.readlines()
-        else:
-            old_lines = []
-
-        geometry_lines = [l for l in old_lines if l.startswith("#GEOMETRY#")]
-        font_lines = [l for l in old_lines if l.startswith("#FONT#")]
-
-        # zapis notatek bez #GEOMETRY#/#FONT#
-        with open(self.data_file, "w", encoding="utf-8") as file:
-            file.writelines([l for l in note_lines if not l.startswith("#GEOMETRY#") and not l.startswith("#FONT#")])
-            for l in font_lines:
-                file.write(l)
-            for l in geometry_lines:
-                file.write(l)
-
-        # rekoncyliujemy style: spróbuj przypisać stare style do nowych pozycji na podstawie treści
-        # old_note_lines -> new_note_lines
-        old_note_lines = [l for l in old_lines if not l.startswith("#GEOMETRY#") and not l.startswith("#FONT#")]
-        new_note_lines = [l for l in note_lines if not l.startswith("#GEOMETRY#") and not l.startswith("#FONT#")]
-        self.reconcile_and_save_styles(old_note_lines, new_note_lines)
-
-    # ---------- POMOCNICZE ----------
     def _save_with_geometry(self, note_lines):
-        """Zachowany dla kompatybilności — zapis bez rekoncyliacji styli."""
         if os.path.exists(self.data_file):
             with open(self.data_file, "r", encoding="utf-8") as file:
                 lines = file.readlines()
